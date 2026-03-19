@@ -1,5 +1,3 @@
-"""WORK IN PROGRESS — Adding methods and implementation details."""
-
 """Churn prediction model."""
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -41,3 +39,25 @@ def preprocess(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, StandardScaler
     X = scaler.fit_transform(df_proc[num_cols + cat_cols])
     y = df_proc["churn"].values
     return X, y, scaler
+
+
+def train_and_evaluate(df: pd.DataFrame, test_size: float = 0.2) -> Dict[str, Any]:
+    X, y, _ = preprocess(df)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=RANDOM_SEED, stratify=y)
+    models = {
+        "logistic_regression": LogisticRegression(max_iter=1000, random_state=RANDOM_SEED),
+        "random_forest": RandomForestClassifier(n_estimators=100, random_state=RANDOM_SEED),
+    }
+    results = {}
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)[:, 1]
+        metrics = {"accuracy": round(accuracy_score(y_test, y_pred), 4),
+                   "precision": round(precision_score(y_test, y_pred, zero_division=0), 4),
+                   "recall": round(recall_score(y_test, y_pred, zero_division=0), 4),
+                   "f1": round(f1_score(y_test, y_pred, zero_division=0), 4),
+                   "roc_auc": round(roc_auc_score(y_test, y_proba), 4)}
+        results[name] = metrics
+        logger.info("%s: accuracy=%.4f, roc_auc=%.4f", name, metrics["accuracy"], metrics["roc_auc"])
+    return results
