@@ -27,6 +27,8 @@ from src.churn_model import (
     validate_dataframe,
     save_model,
     load_model,
+    find_optimal_threshold,
+    compute_learning_curve,
     SUPPORTED_MODELS,
     EXPECTED_COLUMNS,
 )
@@ -432,3 +434,98 @@ class TestModelPersistence:
             model_name=model_name, model_dir=output_dir
         )
         assert metadata["model_name"] == model_name
+
+
+# ---------------------------------------------------------------------------
+# Threshold Optimization
+# ---------------------------------------------------------------------------
+
+class TestFindOptimalThreshold:
+    def test_returns_expected_keys(self):
+        df = generate_synthetic_churn_data(300)
+        result = find_optimal_threshold(df, "gradient_boosting", metric="f1")
+        assert "optimal_threshold" in result
+        assert "best_score" in result
+        assert "metric" in result
+        assert "model_name" in result
+        assert "threshold_scores" in result
+
+    def test_threshold_in_valid_range(self):
+        """Optimal threshold must be between 0.05 and 0.95."""
+        df = generate_synthetic_churn_data(300)
+        result = find_optimal_threshold(df, "random_forest", metric="f1")
+        assert 0.05 <= result["optimal_threshold"] <= 0.95
+
+    def test_best_score_in_valid_range(self):
+        df = generate_synthetic_churn_data(300)
+        result = find_optimal_threshold(df, "gradient_boosting", metric="f1")
+        assert 0.0 <= result["best_score"] <= 1.0
+
+    @pytest.mark.parametrize("metric", ["f1", "precision", "recall", "accuracy"])
+    def test_all_metrics_supported(self, metric):
+        """All four metrics should work without errors."""
+        df = generate_synthetic_churn_data(300)
+        result = find_optimal_threshold(df, "gradient_boosting", metric=metric)
+        assert result["metric"] == metric
+        assert 0.0 <= result["best_score"] <= 1.0
+
+    @pytest.mark.parametrize("model_name", SUPPORTED_MODELS)
+    def test_all_models_supported(self, model_name):
+        """Threshold optimization should work with all model types."""
+        df = generate_synthetic_churn_data(300)
+        result = find_optimal_threshold(df, model_name, metric="f1")
+        assert result["model_name"] == model_name
+
+    def test_threshold_scores_length(self):
+        """Should have scores for each threshold step."""
+        df = generate_synthetic_churn_data(300)
+        result = find_optimal_threshold(df, "gradient_boosting", metric="f1")
+        # 0.05 to 0.95 in steps of 0.01 = 91 points
+        assert len(result["threshold_scores"]) == 91
+
+    def test_invalid_metric_raises(self):
+        df = generate_synthetic_churn_data(100)
+        with pytest.raises(ValueError, match="Invalid metric"):
+            find_optimal_threshold(df, "gradient_boosting", metric="auc")
+
+
+# ---------------------------------------------------------------------------
+# Learning Curve
+# ---------------------------------------------------------------------------
+
+class TestComputeLearningCurve:
+    def test_returns_expected_keys(self):
+        df = generate_synthetic_churn_data(300)
+        result = compute_learning_curve(df, "gradient_boosting", n_points=4)
+        assert "train_sizes" in result
+        assert "train_scores" in result
+        assert "test_scores" in result
+        assert "model_name" in result
+
+    def test_correct_number_of_points(self):
+        df = generate_synthetic_churn_data(500)
+        result = compute_learning_curve(df, "random_forest", n_points=6)
+        assert len(result["train_sizes"]) == 6
+        assert len(result["train_scores"]) == 6
+        assert len(result["test_scores"]) == 6
+
+    def test_scores_in_valid_range(self):
+        df = generate_synthetic_churn_data(500)
+        result = compute_learning_curve(df, "gradient_boosting", n_points=4)
+        for score in result["train_scores"] + result["test_scores"]:
+            assert 0.0 <= score <= 1.0
+
+    def test_train_sizes_increasing(self):
+        """Training sizes should be monotonically increasing."""
+        df = generate_synthetic_churn_data(500)
+        result = compute_learning_curve(df, "gradient_boosting", n_points=5)
+        sizes = result["train_sizes"]
+        assert all(sizes[i] <= sizes[i + 1] for i in range(len(sizes) - 1))
+
+    @pytest.mark.parametrize("model_name", SUPPORTED_MODELS)
+    def test_all_models_supported(self, model_name):
+        """Learning curve should work with all model types."""
+        df = generate_synthetic_churn_data(300)
+        result = compute_learning_curve(df, model_name, n_points=3)
+        assert result["model_name"] == model_name
+        assert len(result["train_scores"]) == 3
