@@ -15,5 +15,6 @@ pg = st.navigation([
     st.Page("pages/2_📈_Predict.py", title="Train & Evaluate", icon="📈"),
     st.Page("pages/3_🔍_Feature_Importance.py", title="Feature Importance", icon="🔍"),
     st.Page("pages/4_🎯_Confusion_Matrix.py", title="Confusion Matrix", icon="🎯"),
+    st.Page("pages/5_⚙️_Threshold_Tuning.py", title="Threshold & Learning", icon="⚙️"),
 ])
 pg.run()
