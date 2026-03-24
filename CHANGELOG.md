@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [3.0.0] - 2026-03-24
+
+### Added
+- **Threshold Optimization** — `find_optimal_threshold()` sweeps classification thresholds (0.05–0.95) to maximize F1, precision, recall, or accuracy for business-optimal decision boundaries
+- **Learning Curves** — `compute_learning_curve()` trains models at progressively larger data subsets to diagnose underfitting, overfitting, and data sufficiency
+- **Automated Model Comparison** — `compare_models()` runs holdout evaluation + cross-validation and returns a structured deployment recommendation with reasoning
+- **Threshold & Learning Dashboard** — New Streamlit page (page 5) with interactive threshold sweep visualization and learning curve diagnostics
+- **Request Logging Middleware** — API logs every request with method, path, status code, and response latency for production monitoring
+- **API Endpoints** — 3 new: `POST /compare`, `POST /optimal-threshold`, `POST /learning-curve`
+- **101 Tests** — 29 new test cases covering threshold optimization, learning curves, model comparison, and all new API endpoints
+
+### Changed
+- All configuration values now overridable via environment variables (CHURN_RANDOM_SEED, CHURN_API_HOST, CHURN_API_PORT, CHURN_LOG_LEVEL, CHURN_DEFAULT_SAMPLES, CHURN_DEFAULT_TEST_SIZE)
+- Bumped API version to 3.0.0
+- Rewrote `examples/quickstart.py` from stub to full working pipeline demo
+- Rewrote `examples/demo.py` from stub to comprehensive 8-section walkthrough
+
+### Documentation
+- Updated README: 101 tests badge, 9 API endpoints table, environment config section, new key concepts
+- Added curl example for threshold optimization endpoint
+
 ## [2.0.0] - 2026-03-23
 
 ### Added
