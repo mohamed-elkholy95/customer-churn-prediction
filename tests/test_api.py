@@ -143,3 +143,83 @@ class TestConfusionMatrix:
             # All values non-negative
             assert result["tn"] >= 0
             assert result["fp"] >= 0
+
+
+class TestCompareModels:
+    def test_default_request(self):
+        resp = client.post("/compare", json={"n_samples": 200})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "recommended_model" in data
+        assert "reason" in data
+        assert "holdout_results" in data
+        assert "cv_results" in data
+        assert "rankings" in data
+
+    def test_recommended_model_is_valid(self):
+        data = client.post("/compare", json={"n_samples": 300}).json()
+        valid = {"logistic_regression", "random_forest", "gradient_boosting"}
+        assert data["recommended_model"] in valid
+
+    def test_rankings_cover_all_metrics(self):
+        data = client.post("/compare", json={"n_samples": 200}).json()
+        expected = {"accuracy", "precision", "recall", "f1", "roc_auc"}
+        assert set(data["rankings"].keys()) == expected
+
+
+class TestOptimalThreshold:
+    def test_default_request(self):
+        resp = client.post("/optimal-threshold", json={"n_samples": 200})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "optimal_threshold" in data
+        assert "best_score" in data
+        assert 0.05 <= data["optimal_threshold"] <= 0.95
+
+    def test_custom_metric(self):
+        resp = client.post(
+            "/optimal-threshold",
+            json={"n_samples": 200, "metric": "recall"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["metric"] == "recall"
+
+    def test_invalid_model(self):
+        resp = client.post(
+            "/optimal-threshold",
+            json={"model_name": "invalid"},
+        )
+        assert resp.status_code == 400
+
+    def test_invalid_metric(self):
+        resp = client.post(
+            "/optimal-threshold",
+            json={"metric": "rmse"},
+        )
+        assert resp.status_code == 400
+
+
+class TestLearningCurve:
+    def test_default_request(self):
+        resp = client.post("/learning-curve", json={"n_samples": 200})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "train_sizes" in data
+        assert "train_scores" in data
+        assert "test_scores" in data
+
+    def test_custom_points(self):
+        resp = client.post(
+            "/learning-curve",
+            json={"n_samples": 300, "n_points": 5},
+        )
+        data = resp.json()
+        assert len(data["train_sizes"]) == 5
+        assert len(data["train_scores"]) == 5
+
+    def test_invalid_model(self):
+        resp = client.post(
+            "/learning-curve",
+            json={"model_name": "invalid"},
+        )
+        assert resp.status_code == 400
