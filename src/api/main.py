@@ -111,6 +111,36 @@ class CrossValidateRequest(BaseModel):
     )
 
 
+class ThresholdRequest(BaseModel):
+    """Request body for optimal threshold search."""
+    n_samples: int = Field(default=1000, ge=100, le=10000)
+    model_name: str = Field(
+        default="gradient_boosting",
+        description="Model to optimize threshold for.",
+    )
+    metric: str = Field(
+        default="f1",
+        description="Metric to maximize: f1, precision, recall, or accuracy.",
+    )
+    test_size: float = Field(
+        default=0.2, gt=0.0, lt=1.0,
+        description="Fraction of data held out for evaluation.",
+    )
+
+
+class LearningCurveRequest(BaseModel):
+    """Request body for learning curve computation."""
+    n_samples: int = Field(default=1000, ge=100, le=10000)
+    model_name: str = Field(
+        default="gradient_boosting",
+        description="Model to compute learning curve for.",
+    )
+    n_points: int = Field(
+        default=8, ge=3, le=20,
+        description="Number of training sizes to evaluate.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -246,6 +276,74 @@ async def confusion_matrices(req: PredictRequest):
         "n_samples": req.n_samples,
         "test_size": req.test_size,
         "results": results,
+    }
+
+
+@app.post("/optimal-threshold")
+async def optimal_threshold(req: ThresholdRequest):
+    """Find the classification threshold that maximizes a metric.
+
+    The default 0.5 threshold is rarely optimal for churn prediction.
+    This endpoint sweeps thresholds from 0.05 to 0.95 and returns the
+    one that maximizes the chosen metric, along with all scores for plotting.
+    """
+    from src.churn_model import generate_synthetic_churn_data, find_optimal_threshold
+
+    valid_models = ["logistic_regression", "random_forest", "gradient_boosting"]
+    if req.model_name not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model_name: {req.model_name}. Choose from: {valid_models}",
+        )
+
+    valid_metrics = ["f1", "precision", "recall", "accuracy"]
+    if req.metric not in valid_metrics:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid metric: {req.metric}. Choose from: {valid_metrics}",
+        )
+
+    df = generate_synthetic_churn_data(n_samples=req.n_samples)
+    result = find_optimal_threshold(
+        df,
+        model_name=req.model_name,
+        test_size=req.test_size,
+        metric=req.metric,
+    )
+
+    return {
+        "n_samples": req.n_samples,
+        **result,
+    }
+
+
+@app.post("/learning-curve")
+async def learning_curve(req: LearningCurveRequest):
+    """Compute a learning curve for a model.
+
+    Shows how model performance (F1 score) changes as training data
+    increases. Useful for diagnosing underfitting/overfitting and
+    deciding if collecting more data would improve the model.
+    """
+    from src.churn_model import generate_synthetic_churn_data, compute_learning_curve
+
+    valid_models = ["logistic_regression", "random_forest", "gradient_boosting"]
+    if req.model_name not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model_name: {req.model_name}. Choose from: {valid_models}",
+        )
+
+    df = generate_synthetic_churn_data(n_samples=req.n_samples)
+    result = compute_learning_curve(
+        df,
+        model_name=req.model_name,
+        n_points=req.n_points,
+    )
+
+    return {
+        "n_samples": req.n_samples,
+        **result,
     }
 
 
