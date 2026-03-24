@@ -874,6 +874,80 @@ def compute_learning_curve(
     }
 
 
+def compare_models(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+    n_cv_splits: int = 5,
+) -> Dict[str, Any]:
+    """Run a comprehensive model comparison and recommend the best model.
+
+    Combines single train/test evaluation with cross-validation to produce
+    a robust comparison across all three model types. Returns a structured
+    summary with the recommended model and reasoning.
+
+    The recommendation logic:
+        1. Primary metric: mean CV F1 score (robust, accounts for class imbalance)
+        2. Tiebreaker: lower CV F1 standard deviation (more consistent)
+        3. Includes both holdout and CV metrics for complete picture
+
+    This is the function to call when you need a definitive answer to
+    "which model should I deploy?"
+
+    Args:
+        df: DataFrame with churn dataset columns.
+        test_size: Fraction of data for holdout evaluation.
+        n_cv_splits: Number of cross-validation folds.
+
+    Returns:
+        Dict with keys:
+            - recommended_model: str, the best model name
+            - reason: str, human-readable explanation of the recommendation
+            - holdout_results: dict, per-model metrics from train/test split
+            - cv_results: dict, per-model cross-validation metrics
+            - rankings: dict mapping metric name → list of (model, score) ranked
+
+    Example:
+        >>> summary = compare_models(df)
+        >>> print(summary["recommended_model"])
+        gradient_boosting
+        >>> print(summary["reason"])
+        'Best mean CV F1 (0.7234) with low variance (±0.0123)'
+    """
+    holdout = train_and_evaluate(df, test_size=test_size)
+    cv = cross_validate_models(df, n_splits=n_cv_splits)
+
+    # Rank models by each metric
+    rankings = {}
+    for metric in ["accuracy", "precision", "recall", "f1", "roc_auc"]:
+        ranked = sorted(
+            [(name, holdout[name][metric]) for name in SUPPORTED_MODELS],
+            key=lambda x: -x[1],
+        )
+        rankings[metric] = ranked
+
+    # Select best model by CV F1 (most robust single metric for churn)
+    best_model = max(
+        SUPPORTED_MODELS,
+        key=lambda m: (cv[m]["mean_f1"], -cv[m]["std_f1"]),
+    )
+
+    reason = (
+        f"Best mean CV F1 ({cv[best_model]['mean_f1']:.4f}) "
+        f"with {'low' if cv[best_model]['std_f1'] < 0.03 else 'moderate'} "
+        f"variance (±{cv[best_model]['std_f1']:.4f})"
+    )
+
+    logger.info("Model comparison complete. Recommended: %s — %s", best_model, reason)
+
+    return {
+        "recommended_model": best_model,
+        "reason": reason,
+        "holdout_results": holdout,
+        "cv_results": cv,
+        "rankings": rankings,
+    }
+
+
 def load_model(
     model_name: str = "gradient_boosting",
     model_dir: str = "models",
