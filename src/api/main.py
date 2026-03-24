@@ -29,12 +29,50 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Churn Prediction API",
-    version="2.0.0",
+    version="3.0.0",
     description=(
         "ML-powered customer churn prediction API. Train models, evaluate "
-        "performance, compute feature importance, and score individual customers."
+        "performance, compute feature importance, score individual customers, "
+        "optimize classification thresholds, and analyze learning curves."
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Request Logging Middleware
+# ---------------------------------------------------------------------------
+
+import time
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every request with method, path, status code, and latency.
+
+    In production ML APIs, request logging is essential for:
+      - Monitoring endpoint usage patterns (which models are popular?)
+      - Tracking response times (is training getting slow?)
+      - Debugging failed requests (what payload caused the error?)
+      - Capacity planning (how many requests per hour?)
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        logger.info(
+            "%s %s → %d (%.0fms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+
+
+app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -148,7 +186,7 @@ class LearningCurveRequest(BaseModel):
 @app.get("/health")
 async def health():
     """Health check endpoint. Returns service status and version."""
-    return {"status": "healthy", "version": "2.0.0"}
+    return {"status": "healthy", "version": "3.0.0"}
 
 
 @app.post("/predict")
@@ -276,6 +314,27 @@ async def confusion_matrices(req: PredictRequest):
         "n_samples": req.n_samples,
         "test_size": req.test_size,
         "results": results,
+    }
+
+
+@app.post("/compare")
+async def compare_models_endpoint(req: PredictRequest):
+    """Run comprehensive model comparison and get a recommendation.
+
+    Trains all three models, evaluates with both holdout and cross-validation,
+    ranks by each metric, and recommends the best model for deployment based
+    on mean CV F1 score.
+    """
+    from src.churn_model import generate_synthetic_churn_data, compare_models
+
+    df = generate_synthetic_churn_data(n_samples=req.n_samples)
+    result = compare_models(df, test_size=req.test_size)
+
+    return {
+        "n_samples": req.n_samples,
+        "test_size": req.test_size,
+        "churn_rate": round(float(df["churn"].mean()), 4),
+        **result,
     }
 
 
