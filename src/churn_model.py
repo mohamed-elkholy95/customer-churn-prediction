@@ -697,6 +697,183 @@ def save_model(
     return output_path
 
 
+def find_optimal_threshold(
+    df: pd.DataFrame,
+    model_name: str = "gradient_boosting",
+    test_size: float = 0.2,
+    metric: str = "f1",
+) -> Dict[str, Any]:
+    """Find the classification threshold that maximizes a given metric.
+
+    By default, classifiers use 0.5 as the decision boundary: if P(churn) >= 0.5,
+    predict churn. But 0.5 is rarely optimal — especially for imbalanced datasets
+    where churners are the minority class.
+
+    This function evaluates every threshold from 0.05 to 0.95 in steps of 0.01
+    and returns the one that maximizes the chosen metric.
+
+    Why this matters for churn:
+        - Lowering the threshold catches more churners (higher recall) at the
+          cost of more false alarms (lower precision).
+        - Raising the threshold reduces false alarms but misses real churners.
+        - The optimal threshold depends on the business cost of each error type.
+
+    Args:
+        df: DataFrame with churn dataset columns.
+        model_name: Which model to optimize.
+        test_size: Fraction of data held out for evaluation.
+        metric: Metric to maximize. One of 'f1', 'precision', 'recall', 'accuracy'.
+
+    Returns:
+        Dict with keys:
+            - optimal_threshold: float, the best threshold found
+            - best_score: float, the metric value at optimal threshold
+            - metric: str, which metric was optimized
+            - model_name: str, which model was used
+            - threshold_scores: list of (threshold, score) tuples for plotting
+
+    Raises:
+        ValueError: If metric is not one of the supported options.
+
+    Example:
+        >>> result = find_optimal_threshold(df, "gradient_boosting", metric="f1")
+        >>> print(f"Optimal threshold: {result['optimal_threshold']:.2f}")
+        Optimal threshold: 0.38
+    """
+    valid_metrics = {"f1", "precision", "recall", "accuracy"}
+    if metric not in valid_metrics:
+        raise ValueError(
+            f"Invalid metric: {metric!r}. Choose from: {sorted(valid_metrics)}"
+        )
+
+    metric_funcs = {
+        "f1": f1_score,
+        "precision": lambda y, p: precision_score(y, p, zero_division=0),
+        "recall": lambda y, p: recall_score(y, p, zero_division=0),
+        "accuracy": accuracy_score,
+    }
+
+    X, y, _ = preprocess(df)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=RANDOM_SEED, stratify=y
+    )
+
+    model = _build_model(model_name)
+    model.fit(X_train, y_train)
+    y_proba = model.predict_proba(X_test)[:, 1]
+
+    # Sweep thresholds from 0.05 to 0.95
+    thresholds = np.arange(0.05, 0.96, 0.01)
+    scores = []
+    score_func = metric_funcs[metric]
+
+    for t in thresholds:
+        y_pred = (y_proba >= t).astype(int)
+        score = score_func(y_test, y_pred)
+        scores.append((round(float(t), 2), round(float(score), 4)))
+
+    # Find the threshold with the highest score
+    best_threshold, best_score = max(scores, key=lambda x: x[1])
+
+    logger.info(
+        "Optimal %s threshold for %s: %.2f (score=%.4f)",
+        metric, model_name, best_threshold, best_score,
+    )
+
+    return {
+        "optimal_threshold": best_threshold,
+        "best_score": best_score,
+        "metric": metric,
+        "model_name": model_name,
+        "threshold_scores": scores,
+    }
+
+
+def compute_learning_curve(
+    df: pd.DataFrame,
+    model_name: str = "gradient_boosting",
+    n_points: int = 8,
+    test_size: float = 0.2,
+) -> Dict[str, Any]:
+    """Compute a learning curve showing how performance scales with training size.
+
+    A learning curve answers: "Do I need more data?" by training the model on
+    progressively larger subsets and measuring test performance.
+
+    Interpretation:
+        - If train and test scores are both low → underfitting (model too simple)
+        - If train score is high but test score is low → overfitting (need more data
+          or regularization)
+        - If both scores converge at a high value → sweet spot (enough data)
+
+    Args:
+        df: DataFrame with churn dataset columns.
+        model_name: Which model to evaluate.
+        n_points: Number of training sizes to evaluate. More points = smoother
+            curve but slower computation.
+        test_size: Fraction of data held out for testing (constant across all
+            points — only the training subset size changes).
+
+    Returns:
+        Dict with keys:
+            - train_sizes: list of int, number of training samples at each point
+            - train_scores: list of float, F1 on training data
+            - test_scores: list of float, F1 on held-out test data
+            - model_name: str, which model was evaluated
+
+    Example:
+        >>> curve = compute_learning_curve(df, "random_forest", n_points=6)
+        >>> for size, score in zip(curve["train_sizes"], curve["test_scores"]):
+        ...     print(f"  {size:5d} samples → F1={score:.4f}")
+    """
+    X, y, _ = preprocess(df)
+    X_train_full, X_test, y_train_full, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=RANDOM_SEED, stratify=y
+    )
+
+    n_train = len(X_train_full)
+    # Generate evenly spaced training sizes from 10% to 100% of training data
+    min_size = max(20, n_train // 10)  # at least 20 samples
+    sizes = np.linspace(min_size, n_train, n_points, dtype=int)
+
+    train_scores = []
+    test_scores = []
+
+    for size in sizes:
+        # Use a consistent random subset for each size
+        rng = np.random.RandomState(RANDOM_SEED)
+        indices = rng.choice(n_train, size=size, replace=False)
+
+        X_train_subset = X_train_full[indices]
+        y_train_subset = y_train_full[indices]
+
+        model = _build_model(model_name)
+        model.fit(X_train_subset, y_train_subset)
+
+        # Training score (how well the model fits the data it saw)
+        y_train_pred = model.predict(X_train_subset)
+        train_f1 = f1_score(y_train_subset, y_train_pred, zero_division=0)
+
+        # Test score (how well it generalizes to unseen data)
+        y_test_pred = model.predict(X_test)
+        test_f1 = f1_score(y_test, y_test_pred, zero_division=0)
+
+        train_scores.append(round(float(train_f1), 4))
+        test_scores.append(round(float(test_f1), 4))
+
+    logger.info(
+        "Learning curve for %s: %d points, %d→%d training samples",
+        model_name, n_points, sizes[0], sizes[-1],
+    )
+
+    return {
+        "train_sizes": sizes.tolist(),
+        "train_scores": train_scores,
+        "test_scores": test_scores,
+        "model_name": model_name,
+    }
+
+
 def load_model(
     model_name: str = "gradient_boosting",
     model_dir: str = "models",
